@@ -1,0 +1,157 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 0%;
+    --foreground: 0 0% 98%;
+    --card: 0 0% 4%;
+    --card-foreground: 0 0% 98%;
+    --popover: 0 0% 6%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 28 100% 50%;
+    --primary-foreground: 0 0% 0%;
+    --secondary: 0 0% 10%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 0 0% 10%;
+    --muted-foreground: 0 0% 55%;
+    --accent: 28 100% 50%;
+    --accent-foreground: 0 0% 0%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 12%;
+    --input: 0 0% 12%;
+    --ring: 28 100% 50%;
+    --radius: 0.375rem;
+    --chart-1: 28 100% 50%;
+    --chart-2: 142 71% 45%;
+    --chart-3: 221 83% 53%;
+    --chart-4: 280 65% 60%;
+    --chart-5: 340 75% 55%;
+
+    /* TPW custom */
+    --tpw-orange: #ff7a00;
+    --tpw-orange-hover: #e86e00;
+    --tpw-surface: #0a0a0a;
+    --tpw-surface-2: #111111;
+    --tpw-surface-3: #1a1a1a;
+    --tpw-border: #1f1f1f;
+    --tpw-border-strong: #2a2a2a;
+    --tpw-text-muted: #888888;
+    --tpw-text-subtle: #555555;
+    --tpw-success: #22c55e;
+    --tpw-warning: #f59e0b;
+    --tpw-error: #ef4444;
+    --tpw-info: #3b82f6;
+  }
+
+  * {
+    @apply border-border;
+    box-sizing: border-box;
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: #000000;
+    color: #ffffff;
+    font-family: var(--font-inter), system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    line-height: 1.5;
+  }
+
+  ::selection {
+    background-color: rgba(255, 122, 0, 0.3);
+    color: #ffffff;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #0a0a0a;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #2a2a2a;
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #3a3a3a;
+  }
+}
+
+@layer utilities {
+  .tpw-surface {
+    background-color: var(--tpw-surface);
+  }
+
+  .tpw-surface-2 {
+    background-color: var(--tpw-surface-2);
+  }
+
+  .tpw-surface-3 {
+    background-color: var(--tpw-surface-3);
+  }
+
+  .tpw-border {
+    border-color: var(--tpw-border);
+  }
+
+  .tpw-border-strong {
+    border-color: var(--tpw-border-strong);
+  }
+
+  .tpw-orange {
+    color: var(--tpw-orange);
+  }
+
+  .tpw-bg-orange {
+    background-color: var(--tpw-orange);
+  }
+
+  .status-running {
+    color: var(--tpw-success);
+  }
+
+  .status-development {
+    color: var(--tpw-warning);
+  }
+
+  .status-error {
+    color: var(--tpw-error);
+  }
+
+  .card-tpw {
+    background-color: var(--tpw-surface);
+    border: 1px solid var(--tpw-border);
+    border-radius: 8px;
+  }
+
+  .card-tpw:hover {
+    border-color: var(--tpw-border-strong);
+  }
+
+  .tpw-input {
+    @apply w-full bg-[#0a0a0a] border border-[#1f1f1f] rounded-md px-3 py-2 text-sm text-white placeholder-[#444];
+    @apply focus:outline-none focus:border-[#ff7a00] focus:ring-1;
+    --tw-ring-color: rgba(255, 122, 0, 0.3);
+  }
+
+  .tpw-input:focus {
+    box-shadow: 0 0 0 1px rgba(255, 122, 0, 0.3);
+    border-color: #ff7a00;
+  }
+
+  select.tpw-input option {
+    background-color: #0a0a0a;
+    color: #ffffff;
+  }
+}
