@@ -172,25 +172,10 @@ function BrainConsoleSurface() {
   }
 
   async function saveDraft() {
-    if (!target || !parsedContract || !verification.ok || !canMutate) {
-      setStatus({ tone: 'error', title: 'BLOCKED', details: !canMutate ? ['authorization: only SUPER_ADMIN can save Brain drafts'] : verification.errors });
-      return;
-    }
-    setSaving(true);
-    const response = await fetch('/api/brain-permits', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        operation: targetPermit ? 'UPDATE' : 'CREATE', permit_id: targetPermit?.id ?? null,
-        app_id: target.id, app_role: targetPermit?.app_role ?? 'BRAIN_CONTRACT',
-        resource: 'brain-contract', field: 'contract', action: 'UPDATE', scope: 'system', enabled: true,
-        change_reason: 'Brain Console draft save', contract: parsedContract,
-      }),
-    });
-    const result = await response.json().catch(() => null);
-    setSaving(false);
-    setStatus(response.ok
-      ? { tone: 'success', title: 'SAVED', details: [`Version v${result?.version?.version ?? 'new'} created for ${target.name}.`, 'Historical versions remain immutable.'] }
-      : { tone: 'error', title: 'SAVE BLOCKED', details: [result?.error ?? 'The draft could not be saved.'] });
+    setStatus({ tone: 'error', title: 'SAVE BLOCKED', details: [
+      !canMutate ? 'authorization: only SUPER_ADMIN can save Brain drafts' : 'Persistence gap: current_version_id is the effective version pointer.',
+      'The existing schema cannot store a draft without changing effective configuration, so no mutation was attempted.',
+    ] });
   }
 
   return (
