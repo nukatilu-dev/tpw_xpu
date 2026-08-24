@@ -14,9 +14,13 @@ import {
   Save,
   Shield,
   X,
+  Code2,
+  Play,
+  Upload,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { resolveTrustedRole } from '@/lib/portal-authorization';
+import { BRAIN_DOMAINS, brainRegistry, verifyBrainConsoleDraft } from '@/lib/brain-contract';
 
 type AppRow = { id: string; name: string; slug: string };
 
@@ -86,7 +90,149 @@ function versionSummary(version: PermitVersion | null | undefined) {
   };
 }
 
+function consoleContractFor(app: AppRow, existing?: Record<string, unknown> | null) {
+  return existing ?? {
+    target: { id: `app.${app.slug}`, name: app.name, app_id: app.id },
+    domains: Object.fromEntries(BRAIN_DOMAINS.map((domain) => [domain, {}])),
+    permits: [],
+  };
+}
+
+function BrainConsoleSurface() {
+  const [apps, setApps] = useState<AppRow[]>([]);
+  const [permits, setPermits] = useState<PermitRecord[]>([]);
+  const [targetId, setTargetId] = useState('');
+  const [contractText, setContractText] = useState('');
+  const [status, setStatus] = useState<{ tone: 'neutral' | 'success' | 'error'; title: string; details: string[] }>({ tone: 'neutral', title: 'Not run', details: [] });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [canMutate, setCanMutate] = useState(false);
+
+  useEffect(() => {
+    async function load() {
+      const { data: session } = await supabase.auth.getSession();
+      if (!session.session?.user) { setLoading(false); return; }
+      const userId = session.session.user.id;
+      const [{ data: profile }, { data: appRows }, { data: permitRows }] = await Promise.all([
+        supabase.from('profiles').select('role').eq('id', userId).maybeSingle(),
+        supabase.from('apps').select('id, name, slug').order('name'),
+        supabase.from('brain_permits').select('*').order('updated_at', { ascending: false }),
+      ]);
+      const resolvedApps = (appRows ?? []) as AppRow[];
+      const rawPermits = (permitRows ?? []) as PermitRecord[];
+      const { data: versionRows } = rawPermits.length > 0
+        ? await supabase.from('brain_permit_versions').select('*').in('permit_id', rawPermits.map((permit) => permit.id)).order('version', { ascending: false })
+        : { data: [] };
+      const resolvedPermits = rawPermits.map((permit) => ({
+        ...permit,
+        current_version: (versionRows as PermitVersion[] | null)?.find((version) => version.id === permit.current_version_id)
+          ?? (versionRows as PermitVersion[] | null)?.find((version) => version.permit_id === permit.id)
+          ?? null,
+      }));
+      setApps(resolvedApps);
+      setPermits(resolvedPermits);
+      setCanMutate(resolveTrustedRole((profile as { role?: string } | null)?.role) === 'SUPER_ADMIN');
+      const firstApp = resolvedApps[0];
+      if (firstApp) {
+        setTargetId(firstApp.id);
+        const permit = resolvedPermits.find((item) => item.app_id === firstApp.id);
+        const stored = permit?.current_version?.after_state?.contract as Record<string, unknown> | undefined;
+        setContractText(JSON.stringify(consoleContractFor(firstApp, stored), null, 2));
+      }
+      setLoading(false);
+    }
+    void load();
+  }, []);
+
+  const target = apps.find((app) => app.id === targetId) ?? null;
+  const targetPermit = permits.find((permit) => permit.app_id === targetId) ?? null;
+  const parsedContract = (() => { try { return JSON.parse(contractText) as Record<string, unknown>; } catch { return null; } })();
+  const verification = parsedContract ? verifyBrainConsoleDraft(parsedContract) : { ok: false, errors: ['contract: invalid JSON'] };
+  const storedVersion = targetPermit?.current_version;
+  const currentContract = storedVersion?.after_state?.contract as Record<string, unknown> | undefined;
+  const affectedDomains = parsedContract?.domains && typeof parsedContract.domains === 'object'
+    ? Object.keys(parsedContract.domains)
+    : [];
+
+  function selectTarget(appId: string) {
+    const app = apps.find((item) => item.id === appId);
+    if (!app) return;
+    const permit = permits.find((item) => item.app_id === appId);
+    const stored = permit?.current_version?.after_state?.contract as Record<string, unknown> | undefined;
+    setTargetId(appId);
+    setContractText(JSON.stringify(consoleContractFor(app, stored), null, 2));
+    setStatus({ tone: 'neutral', title: 'Not run', details: [] });
+  }
+
+  function runVerification() {
+    if (!parsedContract) { setStatus({ tone: 'error', title: 'BLOCKED', details: ['contract: invalid JSON syntax'] }); return; }
+    setStatus(verification.ok
+      ? { tone: 'success', title: 'PASS', details: ['Syntax and contract structure verified.', `Domains present: ${affectedDomains.length}/9.`, 'No conflicts detected in the submitted structure.'] }
+      : { tone: 'error', title: 'BLOCKED', details: verification.errors });
+  }
+
+  async function saveDraft() {
+    if (!target || !parsedContract || !verification.ok || !canMutate) {
+      setStatus({ tone: 'error', title: 'BLOCKED', details: !canMutate ? ['authorization: only SUPER_ADMIN can save Brain drafts'] : verification.errors });
+      return;
+    }
+    setSaving(true);
+    const response = await fetch('/api/brain-permits', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        operation: targetPermit ? 'UPDATE' : 'CREATE', permit_id: targetPermit?.id ?? null,
+        app_id: target.id, app_role: targetPermit?.app_role ?? 'BRAIN_CONTRACT',
+        resource: 'brain-contract', field: 'contract', action: 'UPDATE', scope: 'system', enabled: true,
+        change_reason: 'Brain Console draft save', contract: parsedContract,
+      }),
+    });
+    const result = await response.json().catch(() => null);
+    setSaving(false);
+    setStatus(response.ok
+      ? { tone: 'success', title: 'SAVED', details: [`Version v${result?.version?.version ?? 'new'} created for ${target.name}.`, 'Historical versions remain immutable.'] }
+      : { tone: 'error', title: 'SAVE BLOCKED', details: [result?.error ?? 'The draft could not be saved.'] });
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#252525] pb-4">
+        <div className="flex items-center gap-3">
+          <Code2 className="h-5 w-5 text-[#ff7a00]" />
+          <span className="text-xs font-semibold tracking-[0.16em] text-[#666]">TARGET</span>
+          <select value={targetId} onChange={(event) => selectTarget(event.target.value)} className="min-w-48 rounded-md border border-[#333] bg-[#080808] px-3 py-2 text-sm font-medium text-white focus:border-[#ff7a00] focus:outline-none">
+            {apps.map((app) => <option key={app.id} value={app.id}>{app.name}</option>)}
+          </select>
+          <span className="text-xs text-[#666]">{loading ? 'Loading...' : target ? `/${target.slug}` : 'No target available'}</span>
+        </div>
+        <div className="flex gap-2">
+          <button type="button" onClick={runVerification} className="inline-flex items-center gap-2 rounded-md border border-[#333] bg-[#111] px-3 py-2 text-xs font-semibold text-white hover:border-[#ff7a00]"><Play className="h-3.5 w-3.5" /> RUN</button>
+          <button type="button" onClick={() => void saveDraft()} disabled={saving || !canMutate} className="inline-flex items-center gap-2 rounded-md bg-[#ff7a00] px-3 py-2 text-xs font-semibold text-black disabled:opacity-50"><Save className="h-3.5 w-3.5" /> {saving ? 'SAVING' : 'SAVE'}</button>
+          <button type="button" onClick={() => setStatus({ tone: 'error', title: 'PUBLISH BLOCKED', details: ['Persistence gap: current schema has no draft state, validator identity, decision, timestamp, or approval record.', 'No publish was attempted.'] })} className="inline-flex items-center gap-2 rounded-md border border-[#6b3d20] bg-[#241308] px-3 py-2 text-xs font-semibold text-[#ffb366]"><Upload className="h-3.5 w-3.5" /> PUBLISH</button>
+        </div>
+      </div>
+
+      <div className="grid min-h-[680px] xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,.7fr)] overflow-hidden rounded-lg border border-[#252525] bg-[#080808]">
+        <section className="flex min-h-[680px] flex-col border-b border-[#252525] xl:border-b-0 xl:border-r">
+          <div className="flex items-center justify-between border-b border-[#252525] px-4 py-3"><div><p className="text-xs font-semibold text-white">Brain contract</p><p className="text-[10px] text-[#666]">Editable JSON for the selected target</p></div><span className="font-mono text-[10px] text-[#555]">v{brainRegistry.version}</span></div>
+          <textarea value={contractText} onChange={(event) => setContractText(event.target.value)} spellCheck={false} disabled={!canMutate} className="min-h-[620px] flex-1 resize-none bg-[#050505] p-5 font-mono text-xs leading-6 text-[#d7d7d7] outline-none focus:ring-1 focus:ring-inset focus:ring-[#ff7a00]/50 disabled:opacity-60" />
+        </section>
+        <aside className="bg-[#0b0b0b] p-5">
+          <div className="mb-5 flex items-center justify-between"><div><p className="text-xs font-semibold text-white">Object view</p><p className="text-[10px] text-[#666]">Interpreted structure, not an application render</p></div><span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${status.tone === 'success' ? 'bg-[#12351f] text-[#86efac]' : status.tone === 'error' ? 'bg-[#351717] text-[#fca5a5]' : 'bg-[#1b1b1b] text-[#999]'}`}>{status.title}</span></div>
+          <div className="space-y-4 text-xs">
+            <div><p className="uppercase tracking-[.14em] text-[#555]">Selected target</p><p className="mt-1 font-medium text-white">{target?.name ?? 'None selected'}</p><p className="font-mono text-[10px] text-[#666]">{target?.id ?? '—'}</p></div>
+            <div><p className="uppercase tracking-[.14em] text-[#555]">Version</p><p className="mt-1 text-[#ffb366]">{storedVersion ? `Current v${storedVersion.version}` : 'Unsaved draft'}</p></div>
+            <div><p className="uppercase tracking-[.14em] text-[#555]">Affected domains</p><div className="mt-2 flex flex-wrap gap-1.5">{(affectedDomains.length ? affectedDomains : BRAIN_DOMAINS).map((domain) => <span key={domain} className="rounded border border-[#2d2d2d] px-2 py-1 font-mono text-[10px] text-[#999]">{domain}</span>)}</div></div>
+            <div className="border-t border-[#252525] pt-4"><p className="uppercase tracking-[.14em] text-[#555]">Verification detail</p><ul className="mt-2 space-y-2 text-[#999]">{(status.details.length ? status.details : ['Run the draft to verify syntax, structure, relationships, access, and references.']).map((detail, index) => <li key={`${detail}-${index}`} className="leading-5">{detail}</li>)}</ul></div>
+            <div className="border-t border-[#252525] pt-4"><p className="uppercase tracking-[.14em] text-[#555]">Change summary</p><p className="mt-2 leading-5 text-[#999]">{currentContract ? 'Pending contract is compared against the selected version.' : 'No persisted contract exists for this target yet.'}</p></div>
+          </div>
+        </aside>
+      </div>
+    </div>
+  );
+}
+
 export function BrainPermitEditor() {
+  return <BrainConsoleSurface />;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [permits, setPermits] = useState<PermitRecord[]>([]);
@@ -335,11 +481,11 @@ export function BrainPermitEditor() {
         </div>
       ) : null}
 
-      {message ? (
-        <div className={`rounded-lg border p-3 text-sm ${message.type === 'success' ? 'border-[#22c55e]/20 bg-[#22c55e]/5 text-[#86efac]' : 'border-[#ef4444]/20 bg-[#ef4444]/5 text-[#fca5a5]'}`}>
-          {message.text}
+      {message && (
+        <div className={`rounded-lg border p-3 text-sm ${message?.type === 'success' ? 'border-[#22c55e]/20 bg-[#22c55e]/5 text-[#86efac]' : 'border-[#ef4444]/20 bg-[#ef4444]/5 text-[#fca5a5]'}`}>
+          {message?.text}
         </div>
-      ) : null}
+      )}
 
       <div className="grid xl:grid-cols-[1.4fr_1.6fr_1.3fr] gap-6">
         <section className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg p-4">
@@ -543,7 +689,7 @@ export function BrainPermitEditor() {
                   <button
                     type="button"
                     onClick={() => void runMutation('ROLLBACK')}
-                    disabled={!canMutate || saving || loading || !currentVersion || currentVersion.version <= 1}
+                    disabled={!canMutate || saving || loading || (currentVersion?.version ?? 0) <= 1}
                     className="inline-flex items-center gap-2 rounded-md border border-[#60a5fa]/40 bg-[#60a5fa]/10 px-3 py-2 text-sm font-medium text-[#bfdbfe] hover:bg-[#60a5fa]/20 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <RefreshCcw className="w-4 h-4" />
@@ -566,7 +712,7 @@ export function BrainPermitEditor() {
               <div className="mt-2 text-sm text-white">
                 {currentVersion ? (
                   <>
-                    <p className="font-medium text-[#ff7a00]">v{currentVersion.version}</p>
+                    <p className="font-medium text-[#ff7a00]">v{currentVersion?.version}</p>
                     <p className="mt-2">{currentState.app_role || '—'} / {currentState.resource || '—'} / {currentState.action || '—'}</p>
                     <p className="text-[#888]">field: {currentState.field || 'not set'}</p>
                     <p className="text-[#888]">scope: {currentState.scope || 'not set'}</p>

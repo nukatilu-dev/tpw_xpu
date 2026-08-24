@@ -3,6 +3,7 @@ import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { resolveTrustedRole } from '@/lib/portal-authorization';
 import { validateBrainPermitDraft } from '@/lib/brain-permit-policy';
+import { verifyBrainConsoleDraft } from '@/lib/brain-contract';
 
 type PermitOperation = 'CREATE' | 'UPDATE' | 'ACTIVATE' | 'DEACTIVATE' | 'ROLLBACK';
 
@@ -96,6 +97,13 @@ export async function POST(request: Request) {
   }
 
   const { normalized } = validation;
+  const consoleContract = payload.contract;
+  if (consoleContract !== undefined) {
+    const contractValidation = verifyBrainConsoleDraft(consoleContract);
+    if (!contractValidation.ok) {
+      return NextResponse.json({ error: contractValidation.errors.join('; ') }, { status: 400 });
+    }
+  }
   const supabase = getClient();
 
   const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -222,6 +230,7 @@ export async function POST(request: Request) {
         action: nextAction,
         scope: nextScope,
         enabled: nextEnabled,
+        ...(consoleContract !== undefined ? { contract: consoleContract } : {}),
       };
 
       const { data: versionRow, error: versionError } = await supabase
@@ -290,6 +299,7 @@ export async function POST(request: Request) {
         action: nextAction,
         scope: nextScope,
         enabled: nextEnabled,
+        ...(consoleContract !== undefined ? { contract: consoleContract } : {}),
       };
     }
 
